@@ -23,16 +23,18 @@ export function AttentionAllocator({
 }: AttentionAllocatorProps) {
   const visibleTokens = level.fullTokens.slice(0, level.missingIndex);
 
+  // Mark tokens that have meaningful affinity for any candidate; dim the rest
+  const tokenSignificance = level.tokenAffinities
+    ? visibleTokens.map((_, i) =>
+        Object.values(level.tokenAffinities!).some((affs) => Math.abs(affs[i] ?? 0) > 0.1)
+      )
+    : visibleTokens.map(() => true);
+
   return (
     <div className="glass-card p-6 sm:p-7">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Attention weights</p>
-          <h3 className="mt-2 font-display text-2xl font-semibold text-ink">Where should the model focus?</h3>
-        </div>
-        <div className="rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-600">
-          Visible tokens: {visibleTokens.length}
-        </div>
+      <div>
+        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Attention weights</p>
+        <h3 className="mt-2 font-display text-2xl font-semibold text-ink">Where should the model focus?</h3>
       </div>
       <div className="mt-4 rounded-3xl bg-slate-50 p-4 text-sm leading-6 text-slate-600">
         Add weight to the words you think matter most for predicting the missing token. The prediction bars below update live.
@@ -71,6 +73,7 @@ export function AttentionAllocator({
                   const points = current[index] ?? 0;
                   const canAdd = remaining > 0;
                   const canRemove = points > 0;
+                  const isSignificant = tokenSignificance[index] ?? true;
 
                   return (
                     <div
@@ -78,6 +81,7 @@ export function AttentionAllocator({
                       className={[
                         "rounded-3xl bg-white/80 p-3 shadow-sm transition-colors",
                         isActiveHead && activeTokenIndex === index ? "bg-white ring-2 ring-aurora-200" : "",
+                        !isSignificant && points === 0 ? "opacity-40" : "",
                       ].join(" ")}
                     >
                       <div className="flex items-center gap-3">

@@ -35,7 +35,6 @@ export const levels: Level[] = [
       heavy: [0, 0.5, 0, 0, 0, 0, 0.3, 0, 0, 0, 0],
       red: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     },
-    concepts: ["word-scouts", "flashlights", "fountain"],
     heads: [
       {
         id: "meaning-head",

@@ -28,7 +28,7 @@ export function CandidateOptions({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">
-            {revealed ? "Probability fountain" : "Live next-token prediction"}
+            Live next-token prediction
           </p>
           <h3 className="mt-2 font-display text-2xl font-semibold text-ink">Pick the next token</h3>
           {!revealed && (

@@ -44,7 +44,6 @@ export type Level = {
   correctToken: string;
   candidateProbabilities: Record<string, number>;
   tokenAffinities?: Record<string, number[]>;
-  concepts: ConceptId[];
   heads: AttentionHead[];
   explanation: LevelExplanation;
   tutorial?: {

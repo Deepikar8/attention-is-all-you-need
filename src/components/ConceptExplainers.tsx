@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 
 type CardProps = {
   title: string;
@@ -276,6 +276,204 @@ function MultiHeadExplainer() {
   );
 }
 
+// ── Temperature ────────────────────────────────────────────────────────────────
+
+const baseTrophyProbs = [
+  { token: "big", probability: 73 },
+  { token: "small", probability: 12 },
+  { token: "heavy", probability: 10 },
+  { token: "red", probability: 5 },
+];
+
+function applyTemperature(
+  probs: { token: string; probability: number }[],
+  temperature: number
+) {
+  const logits = probs.map(({ token, probability }) => ({
+    token,
+    logit: Math.log(Math.max(probability, 0.1)) / temperature,
+  }));
+  const maxLogit = Math.max(...logits.map((l) => l.logit));
+  const exps = logits.map(({ token, logit }) => ({
+    token,
+    exp: Math.exp(logit - maxLogit),
+  }));
+  const sumExp = exps.reduce((acc, { exp }) => acc + exp, 0);
+  const raw = exps.map(({ token, exp }) => ({
+    token,
+    probability: (exp / sumExp) * 100,
+  }));
+  // round and adjust drift
+  const rounded = raw.map((r) => ({ ...r, probability: Math.round(r.probability) }));
+  const drift = rounded.reduce((acc, r) => acc + r.probability, 0) - 100;
+  if (drift !== 0) {
+    const idx = rounded.reduce(
+      (best, r, i) => (r.probability > rounded[best].probability ? i : best),
+      0
+    );
+    rounded[idx].probability -= drift;
+  }
+  return rounded;
+}
+
+function TemperatureExplainer() {
+  const [temperature, setTemperature] = useState(1.0);
+
+  const probs = useMemo(() => applyTemperature(baseTrophyProbs, temperature), [temperature]);
+
+  const label =
+    temperature < 0.5
+      ? { text: "Deterministic — model is very confident, always picks the same answer", color: "text-blue-700" }
+      : temperature < 1.2
+      ? { text: "Balanced — good mix of confidence and variety", color: "text-green-700" }
+      : temperature < 1.7
+      ? { text: "Creative — model explores less likely options", color: "text-amber-700" }
+      : { text: "Chaotic — nearly random, model loses coherence", color: "text-red-700" };
+
+  return (
+    <div className="space-y-5">
+      <p className="text-sm leading-7 text-slate-700">
+        After attention produces a probability distribution, a <strong>temperature</strong> parameter is applied before the model picks a token. Low temperature makes the distribution sharper — the top token wins by a landslide. High temperature flattens it — every token becomes equally likely and the output becomes unpredictable.
+      </p>
+
+      <div className="rounded-[20px] bg-slate-50 p-5">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 mb-1">
+          Temperature: <span className="text-ink">{temperature.toFixed(1)}</span>
+        </p>
+        <p className={`text-xs mb-4 font-medium ${label.color}`}>{label.text}</p>
+
+        <input
+          type="range"
+          min={0.1}
+          max={2.0}
+          step={0.1}
+          value={temperature}
+          onChange={(e) => setTemperature(parseFloat(e.target.value))}
+          className="w-full accent-violet-500 mb-5"
+        />
+
+        <div className="space-y-2.5">
+          {probs.map(({ token, probability }) => (
+            <div key={token}>
+              <div className="flex justify-between text-sm font-semibold text-slate-700 mb-1">
+                <span>{token}</span>
+                <span>{probability}%</span>
+              </div>
+              <div className="h-2.5 rounded-full bg-slate-200 overflow-hidden">
+                <div
+                  className="probability-bar h-full rounded-full transition-all duration-200"
+                  style={{ width: `${probability}%` }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="mt-3 text-xs text-slate-500">
+          Starting from trophy-focused attention (big=73%). Drag the slider to see how temperature reshapes confidence.
+        </p>
+      </div>
+
+      <div className="rounded-[20px] bg-amber-50 border border-amber-100 p-4">
+        <p className="text-sm font-semibold text-amber-800">Why this matters for PMs</p>
+        <p className="mt-2 text-sm leading-6 text-amber-700">
+          Most LLM APIs expose a temperature setting. Low temperature (0.0–0.3) is right for factual tasks like summarisation or classification — you want consistency. High temperature (0.8–1.2) is better for brainstorming or creative copy — you want variety. Setting it to 0 doesn't make the model smarter; it just makes it pick the most likely token every single time.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ── Hallucination ──────────────────────────────────────────────────────────────
+
+const hallucinationStates = {
+  signal: {
+    label: "Strong attention signal",
+    description: "Attention is focused on 'trophy'. The model has clear evidence and picks confidently.",
+    probs: [
+      { token: "big", probability: 73 },
+      { token: "small", probability: 12 },
+      { token: "heavy", probability: 10 },
+      { token: "red", probability: 5 },
+    ],
+    note: "High confidence, and the model is right.",
+    noteColor: "text-green-700",
+    barColor: "bg-emerald-400",
+  },
+  noSignal: {
+    label: "No attention signal",
+    description: "All attention weights are zero — no word in context gives the model a useful clue. Probabilities flatten out, but the model still picks one.",
+    probs: [
+      { token: "big", probability: 28 },
+      { token: "small", probability: 27 },
+      { token: "heavy", probability: 26 },
+      { token: "red", probability: 19 },
+    ],
+    note: "The model still outputs an answer — but it's essentially guessing. This is the root cause of hallucination.",
+    noteColor: "text-red-700",
+    barColor: "bg-red-400",
+  },
+};
+
+function HallucinationExplainer() {
+  const [state, setState] = useState<"signal" | "noSignal">("signal");
+  const current = hallucinationStates[state];
+
+  return (
+    <div className="space-y-5">
+      <p className="text-sm leading-7 text-slate-700">
+        A language model has no built-in way to say "I don't know." Its output is always a probability distribution over tokens — and it always picks one. When the context doesn't provide useful signal, that distribution flattens, but the model still outputs a confident-sounding answer.
+      </p>
+
+      <div className="rounded-[20px] bg-slate-50 p-5">
+        <div className="flex gap-2 mb-5">
+          {(["signal", "noSignal"] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setState(s)}
+              className={[
+                "rounded-full px-4 py-1.5 text-sm font-semibold transition-colors",
+                state === s
+                  ? "bg-ink text-white"
+                  : "border border-slate-200 bg-white text-slate-600 hover:border-slate-300",
+              ].join(" ")}
+            >
+              {hallucinationStates[s].label}
+            </button>
+          ))}
+        </div>
+
+        <p className="text-sm text-slate-600 mb-4">{current.description}</p>
+
+        <div className="space-y-2.5">
+          {current.probs.map(({ token, probability }) => (
+            <div key={token}>
+              <div className="flex justify-between text-sm font-semibold text-slate-700 mb-1">
+                <span>{token}</span>
+                <span>{probability}%</span>
+              </div>
+              <div className="h-2.5 rounded-full bg-slate-200 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-300 ${current.barColor}`}
+                  style={{ width: `${probability}%` }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className={`mt-4 text-sm font-medium ${current.noteColor}`}>{current.note}</p>
+      </div>
+
+      <div className="rounded-[20px] bg-amber-50 border border-amber-100 p-4">
+        <p className="text-sm font-semibold text-amber-800">Why this matters for PMs</p>
+        <p className="mt-2 text-sm leading-6 text-amber-700">
+          Hallucination isn't a bug you can patch — it's structural. The model doesn't know what it doesn't know. The fix is in the prompt: ground it with facts, documents, or retrieval (RAG) so attention has real signal to work with. Vague prompts produce flat attention, which produces hallucination.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ── Export ─────────────────────────────────────────────────────────────────────
 
 export function ConceptExplainers() {
@@ -283,7 +481,7 @@ export function ConceptExplainers() {
     <div className="space-y-3">
       <div className="mb-4">
         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500">Go deeper</p>
-        <h3 className="mt-2 font-display text-2xl font-semibold text-ink">Three more concepts from the paper</h3>
+        <h3 className="mt-2 font-display text-2xl font-semibold text-ink">Five more concepts</h3>
         <p className="mt-2 text-sm text-slate-500">Click any card to expand it.</p>
       </div>
       <ConceptCard title="Masking" tag="Concept 1">
@@ -294,6 +492,12 @@ export function ConceptExplainers() {
       </ConceptCard>
       <ConceptCard title="Multi-head attention" tag="Concept 3">
         <MultiHeadExplainer />
+      </ConceptCard>
+      <ConceptCard title="Temperature" tag="Concept 4">
+        <TemperatureExplainer />
+      </ConceptCard>
+      <ConceptCard title="Hallucination" tag="Concept 5">
+        <HallucinationExplainer />
       </ConceptCard>
     </div>
   );
